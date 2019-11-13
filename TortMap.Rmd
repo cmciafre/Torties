@@ -1,0 +1,189 @@
+---
+title: "Movement ecology of three individuals of *Chelonoidis porteri*"
+author: "C. M. Ciafre"
+output:
+  html_document:
+    df_print: paged
+  html_notebook:
+    df_print: paged
+    highlight: zenburn
+    number_sections: no
+    rows.print: 10
+    theme: journal
+---
+```{r setup, NOTICE USE of PACMAN, include=FALSE}
+#install pacman first to automatically install and load any needed packages
+pacman::p_load(reshape, adehabitatHR, data.table, ggfortify, grid, move, moveVis, OpenStreetMap, pbapply, plotly, rgdal, sp, tidyverse, viridis, maptools)
+
+torts<-read.csv("Data/AllTortsUTM.csv", header=TRUE)
+torts_blank <- torts[-c(6:9,20:21,25:33)]
+data <- na.omit(torts_blank)
+```
+
+
+Bastille-Rousseau G, Yackulic C, Frair J, Cabrera F, Blake S.2016. Allometric and temporal scaling of movement characteristics in Galapagos tortoises. Journal of Animal Ecology 85(5): 1171–1181. https://doi.org/10.1111/1365-2656.12561
+
+```{r}
+# ggplot() + 
+#   geom_point(data=data,aes(location.long,location.lat,color=individual.local.identifier)) + 
+#   labs(x="Longitude", y="Latitude") +
+#   guides(color=guide_legend("Identifier"))
+```
+
+```{r message=FALSE, warning=FALSE}
+lapply(split(data, data$individual.local.identifier), 
+       function(x)write.csv(x, file = paste(x$individual.local.identifier[1],".csv"), row.names = FALSE))
+```
+
+```{r}
+files <- list.files(path = ".", pattern = " .*\\.csv", full.names = TRUE)
+```
+
+```{r message=FALSE, warning=FALSE}
+utm_points <- cbind(data$utm.easting, data$utm.northing)
+utm_locations <- SpatialPoints(utm_points, 
+                               proj4string=CRS("+proj=utm +zone=15 +south +datum=WGS84"))
+proj_lat.lon <- as.data.frame(spTransform(
+  utm_locations, CRS("+proj=longlat +datum=WGS84")))
+colnames(proj_lat.lon) <- c("x","y")
+raster <- openmap(c(max(proj_lat.lon$y)+0.01, min(proj_lat.lon$x)-0.01), 
+                  c(min(proj_lat.lon$y)-0.01, max(proj_lat.lon$x)+0.01), 
+                  type = "bing")
+raster_utm <- openproj(raster, 
+                       projection = "+proj=utm +zone=15 +south +ellps=WGS84 +units=m +no_defs")
+```
+
+
+
+
+```{r fig.height=12, fig.width=12,}
+autoplot(raster_utm, expand = TRUE) + theme_bw() +
+  theme(legend.position="bottom") +
+  theme(panel.border = element_rect(colour = "black", fill=NA, size=1)) +
+  geom_point(data=data, aes(utm.easting, 
+                            utm.northing, 
+                            color=individual.local.identifier), size = 3, alpha = 0.8) +
+  theme(axis.title = element_text(face="bold")) + labs(x="Easting",
+                                                       y="Northing") + 
+  guides(color=guide_legend("Identifier"))
+```
+
+```{r message=FALSE, warning=FALSE}
+mcp_raster <- function(filename){
+  data <- read.csv(file = filename)
+  x <- as.data.frame(data$utm.easting)
+  y <- as.data.frame(data$utm.northing)
+  xy <- c(x,y)
+  data.proj <- SpatialPointsDataFrame(xy,data, proj4string = CRS("+proj=utm +zone=15 +south +ellps=WGS84 +units=m +no_defs"))
+  xy <- SpatialPoints(data.proj@coords)
+  mcp.out <- mcp(xy, percent=100, unout="ha")
+  mcp.points <- cbind((data.frame(xy)),data$individual.local.identifier)
+  colnames(mcp.points) <- c("x","y", "identifier")
+  mcp.poly <- fortify(mcp.out, region = "id")
+  units <- grid.text(paste(round(mcp.out@data$area,2),"ha"), x=0.85,  y=0.95,
+                     gp=gpar(fontface=4, col="white", cex=0.9), draw = FALSE)
+  mcp.plot <- autoplot(raster_utm, expand = TRUE) + theme_bw() + theme(legend.position="none") +
+    theme(panel.border = element_rect(colour = "black", fill=NA, size=1)) +
+    geom_polygon(data=mcp.poly, aes(x=mcp.poly$long, y=mcp.poly$lat), alpha = 0.4, fill="orange") +
+    geom_point(data=mcp.points, aes(x=x, y=y)) + 
+    labs(x="Easting (m)", y="Northing (m)", title=mcp.points$identifier) +
+    theme(legend.position="none", plot.title = element_text(face = "bold", hjust = 0.5)) + 
+    annotation_custom(units)
+  mcp.plot
+}
+
+pblapply(files, mcp_raster)
+```
+
+```{r message=FALSE, warning=FALSE}
+kde_raster <- function(filename){
+  data <- read.csv(file = filename)
+  x <- as.data.frame(data$utm.easting)
+  y <- as.data.frame(data$utm.northing)
+  xy <- c(x,y)
+  data.proj <- SpatialPointsDataFrame(xy,data, proj4string = CRS("+proj=utm +zone=15 +south +ellps=WGS84 +units=m +no_defs"))
+  xy <- SpatialPoints(data.proj@coords)
+  kde<-kernelUD(xy, h="href", kern="bivnorm", grid=100)
+  ver <- getverticeshr(kde, 95)
+  kde.points <- cbind((data.frame(data.proj@coords)),data$individual.local.identifier)
+  colnames(kde.points) <- c("x","y","identifier")
+  kde.poly <- fortify(ver, region = "id")
+  units <- grid.text(paste(round(ver$area,2)," ha"), x=0.85,  y=0.95,
+                     gp=gpar(fontface=4, col="white", cex=0.9), draw = FALSE)
+  kde.plot <- autoplot(raster_utm, expand = TRUE) + theme_bw() + theme(legend.position="none") +
+    theme(panel.border = element_rect(colour = "black", fill=NA, size=1)) +
+    geom_polygon(data=kde.poly, aes(x=kde.poly$long, y=kde.poly$lat), alpha = 0.4, fill="orange") +
+    geom_point(data=kde.points, aes(x=x, y=y)) +
+    labs(x="Easting (m)", y="Northing (m)", title=kde.points$identifier) +
+    theme(legend.position="none", plot.title = element_text(face = "bold", hjust = 0.5)) + 
+    annotation_custom(units)
+  kde.plot
+}
+
+pblapply(files, kde_raster)
+```
+
+```{r eval=FALSE, include=FALSE}
+# Nigel <- read.csv("Nigel .csv")
+# date <- as.POSIXct(strptime(as.character(Nigel$timestamp),"%Y-%m-%d %H:%M:%S", tz="Asia/Bangkok"))
+# Nigel$date <- date
+# Nigel.reloc <- cbind.data.frame(Nigel$utm.easting, Nigel$utm.northing,
+#                                 as.vector(Nigel$individual.local.identifier),
+#                                 as.POSIXct(date))
+# colnames(Nigel.reloc) <- c("x","y","id","date")
+# trajectory <- as.ltraj(Nigel.reloc, date=date, id="Nigel")
+# sig1 <- liker(trajectory, sig2 = 58, rangesig1 = c(0, 5), plotit = FALSE)
+# opha.traj <- kernelbb(trajectory, sig1 = .1351, sig2 = 58, grid = 100)
+# bb_ver <- getverticeshr(opha.traj, 95)
+# bb_poly <- fortify(bb_ver, region = "id", 
+#                    proj4string = CRS("+proj=utm +zone=15 +south
+#                                      +ellps=WGS84 +units=m +no_defs"))
+# colnames(bb_poly) <- c("x","y","order","hole","piece","id","group")
+# bb_image <- crop(opha.traj, bb_ver, 
+#                  proj4string = CRS("+proj=utm +zone=15 +south 
+#                                    +ellps=WGS84 +units=m +no_defs"))
+# bb_units <- grid.text(paste(round(bb_ver$area,2)," ha"), x=0.85,  y=0.95,
+#                       gp=gpar(fontface=4, col="white", cex=0.9), draw = FALSE)
+# bb.plot <- autoplot(raster_utm, expand = TRUE) + theme_bw() + theme(legend.position="none") +
+#   theme(panel.border = element_rect(colour = "black", fill=NA, size=1)) +
+#   geom_tile(data=bb_image, 
+#             aes(x=bb_image@coords[,1], y=bb_image@coords[,2],
+#                 fill = bb_image@data$ud)) +
+#   geom_polygon(data=bb_poly, aes(x=x, y=y, group = group), color = "black", fill = NA) +
+#   scale_fill_viridis_c(option = "inferno") + annotation_custom(bb_units) +
+#   labs(x="Easting (m)", y="Northing (m)", title="Mary") +
+#   theme(legend.position="none", plot.title = element_text(face = "bold", hjust = 0.5))
+# bb.plot
+```
+
+```{r eval=FALSE, include=FALSE}
+# mary.move <- move(x=Mary$location.long, 
+#                   y=Mary$location.lat, 
+#                   time=as.POSIXct(Mary$timestamp, 
+#                                   format="%Y-%m-%d %H:%M:%S", tz="Pacific/Galapagos"), 
+#                   proj=CRS("+proj=longlat +ellps=WGS84 +datum=WGS84"),
+#                   data=Mary, animal=Mary$individual.local.identifier, 
+#                   sensor=Mary$sensor.type)
+# 
+# movement <- align_move(mary.move, res = "max", digit = 0, unit = "secs")
+# 
+# frames <- frames_spatial(movement, path_colours = "red",
+#                          map_service = "mapbox", 
+#                          map_type = "hybrid",
+#                          map_token = Sys.getenv('map_token'),
+#                          alpha = 0.5) %>% 
+#   add_labels(x = "Longitude", y = "Latitude") %>%
+#   add_northarrow() %>% 
+#   add_scalebar() %>% 
+#   add_timestamps(movement, type = "label") %>% 
+#   add_progress()
+# 
+# animate_frames(frames, fps = 5, overwrite = TRUE,
+#                out_file = "./maryVis-5fps.gif")
+```
+
+
+
+
+
+
