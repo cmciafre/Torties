@@ -45,7 +45,7 @@ lapply(split(data, data$individual.local.identifier),
        function(x)write.csv(x, file = paste(x$individual.local.identifier[1],".csv"), row.names = FALSE))
 ```
 
-```{r eval=FALSE, include=FALSE}
+```{r}
 files <- list.files(path = ".", pattern = " .*\\.csv", full.names = TRUE)
 ```
 
@@ -101,7 +101,7 @@ mcp_raster <- function(filename){
   mcp.plot
 }
 
-lapply(files, mcp_raster)
+pblapply(files, mcp_raster)
 ```
 
 ```{r echo=FALSE, message=FALSE, warning=FALSE}
